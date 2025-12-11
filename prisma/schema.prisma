@@ -1,0 +1,82 @@
+// Prisma Schema - SQLite 数据库配置
+// 表设计规范参见: config/数据库表规范.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 用户模型
+model User {
+  // === 基础字段 ===
+  id         Int      @id @default(autoincrement())
+  createTime DateTime @default(now())
+  updateTime DateTime @updatedAt
+  status     Int      @default(1)
+
+  // === 业务字段 ===
+  username   String   @unique
+  password   String   // 存储加密后的密码
+
+  // === 关联 ===
+  logs       LogEntry[]
+  summaries  Summary[]
+  templates  SummaryTemplate[]
+}
+
+// 日志条目模型
+model LogEntry {
+  // === 基础字段 ===
+  id         Int      @id @default(autoincrement())
+  createTime DateTime @default(now())
+  updateTime DateTime @updatedAt
+  status     Int      @default(1)
+  creatorId  Int      @default(0)
+
+  // === 业务字段 ===
+  title   String
+  content String
+
+  // === 关联 ===
+  user    User?   @relation(fields: [creatorId], references: [id])
+}
+
+// 周报模型
+model Summary {
+  // === 基础字段 ===
+  id         Int      @id @default(autoincrement())
+  createTime DateTime @default(now())
+  updateTime DateTime @updatedAt
+  status     Int      @default(1)
+  creatorId  Int      @default(0)
+
+  // === 业务字段 ===
+  title   String   // 周报标题
+  content String   // 周报内容 (Markdown格式)
+  logIds  String   // 关联的日志ID列表，用逗号分隔
+
+  // === 关联 ===
+  user    User?   @relation(fields: [creatorId], references: [id])
+}
+
+// 周报模板模型
+model SummaryTemplate {
+  // === 基础字段 ===
+  id         Int      @id @default(autoincrement())
+  createTime DateTime @default(now())
+  updateTime DateTime @updatedAt
+  status     Int      @default(1)
+  creatorId  Int      @default(0)
+
+  // === 业务字段 ===
+  name        String   // 模板名称
+  content     String   // 模板内容 (Markdown格式)
+  isDefault   Int      @default(0)  // 是否为默认模板 (0:否 1:是)
+
+  // === 关联 ===
+  user    User?   @relation(fields: [creatorId], references: [id])
+}
