@@ -9,7 +9,7 @@ import {
   extractUnfinishedTasks,
   formatDate
 } from '@/lib/utils'
-import { CornerDownRight, Save, GripVertical, CheckSquare, Square, Trash2, Heading1, Heading2, Heading3, ChevronDown } from 'lucide-react'
+import { CornerDownRight, Save, GripVertical, CheckSquare, Square, Trash2, Heading1, Heading2, Heading3, ChevronDown, Copy, Check } from 'lucide-react'
 
 interface EditorProps {
   log: LogEntry
@@ -24,6 +24,7 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
   const [focusId, setFocusId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [headingMenuOpen, setHeadingMenuOpen] = useState<string | null>(null) // 存储打开菜单的 block id
+  const [isCopied, setIsCopied] = useState(false) // 复制状态
   const itemRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({})
   const isLocalChange = useRef(false)
   const lastLogId = useRef<number | null>(null)
@@ -85,6 +86,52 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [headingMenuOpen])
+
+  // 一键复制日志内容（转换为分类列表格式）
+  const handleCopyContent = async () => {
+    // 筛选出完成和未完成的任务
+    const completedTasks = blocks.filter(b => b.type === 'todo' && b.checked && b.content.trim())
+    const incompleteTasks = blocks.filter(b => b.type === 'todo' && !b.checked && b.content.trim())
+    
+    // 构建格式化文本
+    let textToCopy = ''
+    
+    // 完成工作
+    textToCopy += '完成工作\n'
+    if (completedTasks.length > 0) {
+      completedTasks.forEach((task, index) => {
+        textToCopy += `${index + 1}.${task.content}\n`
+      })
+    }
+    
+    // 没完成工作（与上面空一行分隔）
+    textToCopy += '\n没完成工作\n'
+    if (incompleteTasks.length > 0) {
+      incompleteTasks.forEach((task, index) => {
+        textToCopy += `${index + 1}.${task.content}\n`
+      })
+    }
+    
+    // 去除末尾多余的换行
+    textToCopy = textToCopy.trimEnd()
+    
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      setIsCopied(true)
+      setTimeout(() => setIsCopied(false), 2000) // 2秒后重置状态
+    } catch (error) {
+      console.error('复制失败:', error)
+      // 降级方案：使用传统方式复制
+      const textarea = document.createElement('textarea')
+      textarea.value = textToCopy
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setIsCopied(true)
+      setTimeout(() => setIsCopied(false), 2000)
+    }
+  }
 
   const handleImportTasks = () => {
     if (!previousLog) return
@@ -268,6 +315,18 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
               <span className="hidden sm:inline">导入待办</span>
             </button>
           )}
+          <button
+            onClick={handleCopyContent}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
+              isCopied 
+                ? 'text-green-600 bg-green-50' 
+                : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+            }`}
+            title="复制日志内容"
+          >
+            {isCopied ? <Check size={16} /> : <Copy size={16} />}
+            <span className="hidden sm:inline">{isCopied ? '已复制' : '复制'}</span>
+          </button>
           <button
             onClick={() => onDelete(log.id)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-500 bg-red-50 hover:bg-red-100 rounded-md transition-colors whitespace-nowrap"
