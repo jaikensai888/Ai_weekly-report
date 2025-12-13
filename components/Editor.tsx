@@ -152,13 +152,6 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
         newBlocks.pop()
       }
 
-      // 添加分隔说明
-      newBlocks.push({
-        id: generateId(),
-        type: 'h2',
-        content: `待办事项 (来自 ${formatDate(previousLog.createTime)})`
-      })
-
       return [...newBlocks, ...unfinishedBlocks]
     })
   }
@@ -216,15 +209,9 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
         e.preventDefault()
         if (block.type === 'todo') {
           updateBlock(index, { type: 'paragraph' })
-        } else if (block.type === 'h1') {
-          // 一级标题降级为二级标题
-          updateBlock(index, { type: 'h2' })
-        } else if (block.type === 'h2') {
-          // 二级标题降级为三级标题
-          updateBlock(index, { type: 'h3' })
-        } else if (block.type === 'h3') {
-          // 三级标题降级为普通段落
-          updateBlock(index, { type: 'paragraph' })
+        } else if (block.type === 'h1' || block.type === 'h2' || block.type === 'h3') {
+          // 标题直接删除
+          removeBlock(index)
         } else {
           removeBlock(index)
         }
