@@ -5,7 +5,7 @@ const net = require('net')
 
 let mainWindow = null
 let serverProcess = null
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 3001
 
 function waitForPort(port, host = '127.0.0.1', timeoutMs = 20000) {
   const start = Date.now()

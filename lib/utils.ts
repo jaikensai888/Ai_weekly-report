@@ -10,38 +10,45 @@ export const parseMarkdownToBlocks = (markdown: string): Block[] => {
   if (!markdown) return [{ id: generateId(), type: 'paragraph', content: '' }]
 
   return markdown.split('\n').map(line => {
+    // 检查是否有隐私标记 🔒
+    const isPrivate = line.includes(' 🔒')
+    const cleanLine = line.replace(' 🔒', '')
+
     // 检查三级标题格式: "### " （需要先于二级标题检查）
-    const h3Match = line.match(/^###\s+(.*)/)
+    const h3Match = cleanLine.match(/^###\s+(.*)/)
     if (h3Match) {
       return {
         id: generateId(),
         type: 'h3',
-        content: h3Match[1]
+        content: h3Match[1],
+        isPrivate
       }
     }
 
     // 检查二级标题格式: "## " （需要先于一级标题检查）
-    const h2Match = line.match(/^##\s+(.*)/)
+    const h2Match = cleanLine.match(/^##\s+(.*)/)
     if (h2Match) {
       return {
         id: generateId(),
         type: 'h2',
-        content: h2Match[1]
+        content: h2Match[1],
+        isPrivate
       }
     }
 
     // 检查一级标题格式: "# "
-    const h1Match = line.match(/^#\s+(.*)/)
+    const h1Match = cleanLine.match(/^#\s+(.*)/)
     if (h1Match) {
       return {
         id: generateId(),
         type: 'h1',
-        content: h1Match[1]
+        content: h1Match[1],
+        isPrivate
       }
     }
 
     // 检查任务格式: "- [x] " 或 "- [ ] "
-    const taskMatch = line.match(/^(-\s|\d+\.\s|)\s*\[([xX ])\]\s+(.*)/)
+    const taskMatch = cleanLine.match(/^(-\s|\d+\.\s|)\s*\[([xX ])\]\s+(.*)/)
     if (taskMatch) {
       return {
         id: generateId(),
@@ -52,7 +59,7 @@ export const parseMarkdownToBlocks = (markdown: string): Block[] => {
     }
 
     // 检查列表项格式
-    const listMatch = line.match(/^(\d+\.|-|\*)\s+(.*)/)
+    const listMatch = cleanLine.match(/^(\d+\.|-|\*)\s+(.*)/)
     if (listMatch) {
       return {
         id: generateId(),
@@ -66,7 +73,7 @@ export const parseMarkdownToBlocks = (markdown: string): Block[] => {
     return {
       id: generateId(),
       type: 'paragraph',
-      content: line
+      content: cleanLine
     }
   })
 }
@@ -74,20 +81,62 @@ export const parseMarkdownToBlocks = (markdown: string): Block[] => {
 // 块转换为Markdown
 export const blocksToMarkdown = (blocks: Block[]): string => {
   return blocks.map(block => {
+    const privateMarker = block.isPrivate ? ' 🔒' : ''
     if (block.type === 'h1') {
-      return `# ${block.content}`
+      return `# ${block.content}${privateMarker}`
     }
     if (block.type === 'h2') {
-      return `## ${block.content}`
+      return `## ${block.content}${privateMarker}`
     }
     if (block.type === 'h3') {
-      return `### ${block.content}`
+      return `### ${block.content}${privateMarker}`
     }
     if (block.type === 'todo') {
       return `- [${block.checked ? 'x' : ' '}] ${block.content}`
     }
     return block.content
   }).join('\n')
+}
+
+// 过滤掉隐私内容的 Markdown（用于周报生成）
+export const filterPrivateContent = (markdown: string): string => {
+  const blocks = parseMarkdownToBlocks(markdown)
+  const filteredBlocks: Block[] = []
+  
+  let currentPrivateLevel = 0 // 当前隐私标题级别
+  
+  const getHeadingLevel = (type: string): number => {
+    if (type === 'h1') return 1
+    if (type === 'h2') return 2
+    if (type === 'h3') return 3
+    return 0
+  }
+  
+  for (const block of blocks) {
+    const blockLevel = getHeadingLevel(block.type)
+    
+    // 如果在隐私区域内
+    if (currentPrivateLevel > 0) {
+      // 遇到同级或更高级别的标题，停止隐私区域
+      if (blockLevel > 0 && blockLevel <= currentPrivateLevel) {
+        currentPrivateLevel = 0
+      } else {
+        // 跳过隐私内容
+        continue
+      }
+    }
+    
+    // 检查是否是隐私标题
+    if (blockLevel > 0 && block.isPrivate) {
+      currentPrivateLevel = blockLevel
+      continue // 跳过隐私标题本身
+    }
+    
+    // 添加非隐私内容
+    filteredBlocks.push(block)
+  }
+  
+  return blocksToMarkdown(filteredBlocks)
 }
 
 // 提取未完成任务（包含上级标题）

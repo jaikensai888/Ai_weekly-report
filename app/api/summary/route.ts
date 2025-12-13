@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
+import { filterPrivateContent } from '@/lib/utils'
 
 // 强制动态渲染，防止构建时查询数据库
 export const dynamic = 'force-dynamic'
@@ -38,8 +39,10 @@ export async function POST(request: NextRequest) {
 
     sortedLogs.forEach((log: any) => {
       const dateStr = new Date(log.createTime).toLocaleDateString('zh-CN')
+      // 过滤掉隐私内容
+      const filteredContent = filterPrivateContent(log.content)
       promptContext += `--- 日期: ${dateStr}，标题: ${log.title} ---\n`
-      promptContext += `${log.content}\n\n`
+      promptContext += `${filteredContent}\n\n`
     })
 
     // 如果指定了模板，使用模板内容作为系统提示词

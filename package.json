@@ -4,16 +4,19 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "cross-env DATABASE_URL=file:./dev.db next dev",
+    "dev": "cross-env DATABASE_URL=file:./dev.db next dev -p 3001",
     "build": "prisma generate && next build",
-    "start": "cross-env DATABASE_URL=file:./dev.db next start",
+    "start": "cross-env DATABASE_URL=file:./dev.db next start -p 3001",
     "lint": "next lint",
     "db:push": "cross-env DATABASE_URL=file:./dev.db prisma db push",
     "db:studio": "cross-env DATABASE_URL=file:./dev.db prisma studio",
-    "desktop:dev": "cross-env PORT=3000 concurrently \"npm:dev\" \"electron .\"",
+    "desktop:dev": "cross-env PORT=3001 concurrently \"npm:dev\" \"electron .\"",
     "desktop:build": "npm run build && electron-builder -w"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@prisma/client": "^5.15.0",
     "lucide-react": "^0.555.0",
     "next": "^14.2.0",

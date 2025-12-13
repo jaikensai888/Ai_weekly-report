@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { LogEntry, Block } from '@/lib/types'
 import {
   parseMarkdownToBlocks,
@@ -9,13 +9,231 @@ import {
   extractUnfinishedTasks,
   formatDate
 } from '@/lib/utils'
-import { CornerDownRight, Save, GripVertical, CheckSquare, Square, Trash2, Heading1, Heading2, Heading3, ChevronDown, Copy, Check } from 'lucide-react'
+import { CornerDownRight, Save, GripVertical, CheckSquare, Square, Trash2, Heading1, Heading2, Heading3, ChevronDown, ChevronRight, Copy, Check, Eye, EyeOff } from 'lucide-react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 interface EditorProps {
   log: LogEntry
   previousLog?: LogEntry
   onUpdate: (updatedLog: LogEntry) => void
   onDelete: (id: number) => void
+}
+
+// BlockItem 组件的 Props
+interface BlockItemProps {
+  block: Block
+  index: number
+  updateBlock: (index: number, updates: Partial<Block>) => void
+  toggleCollapse: (index: number) => void
+  togglePrivate: (index: number) => void
+  headingMenuOpen: string | null
+  setHeadingMenuOpen: (id: string | null) => void
+  menuRef: React.RefObject<HTMLDivElement | null>
+  itemRefs: React.MutableRefObject<{ [key: string]: HTMLTextAreaElement | null }>
+  handleChange: (e: React.ChangeEvent<HTMLTextAreaElement>, index: number) => void
+  handleKeyDown: (e: React.KeyboardEvent, index: number) => void
+  dragListeners?: any
+}
+
+// Block 渲染组件
+const BlockItem: React.FC<BlockItemProps> = ({
+  block,
+  index,
+  updateBlock,
+  toggleCollapse,
+  togglePrivate,
+  headingMenuOpen,
+  setHeadingMenuOpen,
+  menuRef,
+  itemRefs,
+  handleChange,
+  handleKeyDown,
+  dragListeners,
+}) => {
+  return (
+    <div className="group flex items-start -ml-8 pl-8 relative">
+      {/* 拖拽手柄 */}
+      <div
+        {...dragListeners}
+        className={`absolute left-0 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing text-gray-300 ${
+          block.type === 'h1' ? 'top-2.5' : block.type === 'h2' ? 'top-2' : block.type === 'h3' ? 'top-1.5' : 'top-1.5'
+        }`}
+      >
+        <GripVertical size={16} />
+      </div>
+
+      {/* 标题隐私按钮 - 在拖拽手柄旁边 */}
+      {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
+        <button
+          onClick={() => togglePrivate(index)}
+          className={`absolute left-4 rounded p-0.5 transition-all opacity-0 group-hover:opacity-100 ${
+            block.isPrivate
+              ? 'text-amber-500 hover:text-amber-600 hover:bg-amber-50 opacity-100'
+              : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'
+          } ${block.type === 'h1' ? 'top-2.5' : block.type === 'h2' ? 'top-2' : 'top-1.5'}`}
+          title={block.isPrivate ? "取消隐私标记" : "标记为隐私"}
+        >
+          {block.isPrivate ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      )}
+
+      {/* 标题折叠按钮 */}
+      {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
+        <button
+          onClick={() => toggleCollapse(index)}
+          className={`absolute -left-6 flex-shrink-0 rounded p-0.5 transition-all hover:bg-gray-100 text-gray-400 hover:text-gray-600 ${
+            block.type === 'h1' ? 'top-2' : block.type === 'h2' ? 'top-1.5' : 'top-1'
+          }`}
+          title={block.collapsed ? "展开" : "折叠"}
+        >
+          {block.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+        </button>
+      )}
+
+      {/* 标题图标 - 可点击切换 */}
+      {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
+        <div className="relative" ref={headingMenuOpen === block.id ? menuRef : null}>
+          <button
+            onClick={() => setHeadingMenuOpen(headingMenuOpen === block.id ? null : block.id)}
+            className={`flex items-center gap-0.5 mr-2 flex-shrink-0 rounded px-1 py-0.5 transition-all hover:bg-gray-100 ${
+              block.type === 'h1' ? 'mt-1.5 text-primary-500' :
+              block.type === 'h2' ? 'mt-1 text-primary-400' :
+              'mt-0.5 text-primary-300'
+            }`}
+            title="点击切换标题级别"
+          >
+            {block.type === 'h1' && <Heading1 size={22} />}
+            {block.type === 'h2' && <Heading2 size={20} />}
+            {block.type === 'h3' && <Heading3 size={18} />}
+          </button>
+
+          {/* 标题级别选择菜单 */}
+          {headingMenuOpen === block.id && (
+            <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 min-w-[120px]">
+              <button
+                onClick={() => { updateBlock(index, { type: 'h1' }); setHeadingMenuOpen(null) }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h1' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'}`}
+              >
+                <Heading1 size={18} />
+                <span className="text-sm">一级标题</span>
+              </button>
+              <button
+                onClick={() => { updateBlock(index, { type: 'h2' }); setHeadingMenuOpen(null) }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h2' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'}`}
+              >
+                <Heading2 size={18} />
+                <span className="text-sm">二级标题</span>
+              </button>
+              <button
+                onClick={() => { updateBlock(index, { type: 'h3' }); setHeadingMenuOpen(null) }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h3' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'}`}
+              >
+                <Heading3 size={18} />
+                <span className="text-sm">三级标题</span>
+              </button>
+              <div className="border-t border-gray-100 my-1" />
+              <button
+                onClick={() => { updateBlock(index, { type: 'paragraph' }); setHeadingMenuOpen(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-500 hover:bg-gray-50 transition-colors"
+              >
+                <span className="w-[18px] text-center text-xs">T</span>
+                <span className="text-sm">正文</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 待办复选框 */}
+      {block.type === 'todo' && (
+        <button
+          onClick={() => updateBlock(index, { checked: !block.checked })}
+          className={`mt-1.5 mr-3 flex-shrink-0 transition-all ${block.checked ? 'text-primary-500' : 'text-gray-300 hover:text-primary-400'}`}
+        >
+          {block.checked ? <CheckSquare size={20} className="drop-shadow-sm" /> : <Square size={20} />}
+        </button>
+      )}
+
+      {/* 文本输入 */}
+      <textarea
+        ref={el => { itemRefs.current[block.id] = el }}
+        value={block.content}
+        onChange={(e) => handleChange(e, index)}
+        onKeyDown={(e) => handleKeyDown(e, index)}
+        placeholder={
+          block.type === 'h1' ? "一级标题..." :
+          block.type === 'h2' ? "二级标题..." :
+          block.type === 'h3' ? "三级标题..." :
+          block.type === 'todo' ? "待办事项" :
+          "输入 '# ' 一级标题，'## ' 二级标题，'### ' 三级标题，'1. ' 待办..."
+        }
+        rows={1}
+        className={`w-full bg-transparent resize-none focus:outline-none transition-colors leading-relaxed py-1
+          ${block.type === 'h1' ? 'text-2xl font-bold text-slate-800' : ''}
+          ${block.type === 'h2' ? 'text-xl font-semibold text-slate-700' : ''}
+          ${block.type === 'h3' ? 'text-lg font-semibold text-slate-600' : ''}
+          ${block.type === 'todo' && block.checked ? 'line-through text-gray-400 decoration-gray-300' : ''}
+          ${block.type === 'todo' && !block.checked ? 'text-slate-700' : ''}
+          ${block.type === 'paragraph' ? 'text-slate-700' : ''}
+        `}
+        style={{ minHeight: block.type === 'h1' ? '40px' : block.type === 'h2' ? '36px' : block.type === 'h3' ? '32px' : '28px' }}
+      />
+    </div>
+  )
+}
+
+// 可排序的 Block 组件
+interface SortableBlockProps {
+  block: Block
+  index: number
+  children: React.ReactNode
+}
+
+const SortableBlock: React.FC<SortableBlockProps> = ({ block, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: block.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : 'auto' as const,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      {React.Children.map(children, child => {
+        if (React.isValidElement(child)) {
+          return React.cloneElement(child as React.ReactElement<any>, { dragListeners: listeners })
+        }
+        return child
+      })}
+    </div>
+  )
 }
 
 const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete }) => {
@@ -25,6 +243,7 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
   const [isSaving, setIsSaving] = useState(false)
   const [headingMenuOpen, setHeadingMenuOpen] = useState<string | null>(null) // 存储打开菜单的 block id
   const [isCopied, setIsCopied] = useState(false) // 复制状态
+  const [isPrivateMode, setIsPrivateMode] = useState(false) // 隐私阅读模式
   const itemRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({})
   const isLocalChange = useRef(false)
   const lastLogId = useRef<number | null>(null)
@@ -279,6 +498,170 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
   const isEmpty = blocks.length === 0 || (blocks.length === 1 && blocks[0].content === '')
   const hasUnfinishedPrevious = previousLog && extractUnfinishedTasks(previousLog.content).length > 0
 
+  // 切换标题折叠状态
+  const toggleCollapse = (index: number) => {
+    isLocalChange.current = true
+    updateBlock(index, { collapsed: !blocks[index].collapsed })
+  }
+
+  // 切换标题隐私状态
+  const togglePrivate = (index: number) => {
+    isLocalChange.current = true
+    updateBlock(index, { isPrivate: !blocks[index].isPrivate })
+  }
+
+  // 获取标题级别数字 (h1=1, h2=2, h3=3)
+  const getHeadingLevel = (type: string): number => {
+    if (type === 'h1') return 1
+    if (type === 'h2') return 2
+    if (type === 'h3') return 3
+    return 0
+  }
+
+  // 计算哪些 blocks 应该被隐藏（被折叠的标题下的内容 + 隐私模式下的隐私内容）
+  const getHiddenBlockIds = (): Set<string> => {
+    const hiddenIds = new Set<string>()
+    let currentCollapsedLevel = 0 // 当前折叠的标题级别
+    let currentPrivateLevel = 0 // 当前隐私的标题级别（仅在隐私模式下生效）
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]
+      const blockLevel = getHeadingLevel(block.type)
+
+      // 处理隐私模式隐藏
+      if (isPrivateMode && currentPrivateLevel > 0) {
+        // 遇到同级或更高级别的标题，停止隐私隐藏
+        if (blockLevel > 0 && blockLevel <= currentPrivateLevel) {
+          currentPrivateLevel = 0
+        } else {
+          // 隐藏这个 block
+          hiddenIds.add(block.id)
+          continue
+        }
+      }
+
+      // 检查这个标题是否是隐私标题（在隐私模式下）
+      if (isPrivateMode && blockLevel > 0 && block.isPrivate) {
+        hiddenIds.add(block.id) // 隐藏标题本身
+        currentPrivateLevel = blockLevel
+        continue
+      }
+
+      // 处理折叠隐藏
+      if (currentCollapsedLevel > 0) {
+        // 遇到同级或更高级别的标题，停止折叠
+        if (blockLevel > 0 && blockLevel <= currentCollapsedLevel) {
+          currentCollapsedLevel = 0
+        } else {
+          // 否则隐藏这个 block
+          hiddenIds.add(block.id)
+          continue
+        }
+      }
+
+      // 检查这个标题是否被折叠
+      if (blockLevel > 0 && block.collapsed) {
+        currentCollapsedLevel = blockLevel
+      }
+    }
+
+    return hiddenIds
+  }
+
+  const hiddenBlockIds = getHiddenBlockIds()
+
+  // 拖拽相关
+  const [activeId, setActiveId] = useState<string | null>(null)
+  
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
+
+  // 获取标题及其下方内容的索引范围
+  const getHeadingRange = (startIndex: number): { start: number; end: number } => {
+    const block = blocks[startIndex]
+    const blockLevel = getHeadingLevel(block.type)
+    
+    // 如果不是标题，只返回当前块
+    if (blockLevel === 0) {
+      return { start: startIndex, end: startIndex }
+    }
+    
+    // 找到这个标题下方所有内容的结束位置
+    let endIndex = startIndex
+    for (let i = startIndex + 1; i < blocks.length; i++) {
+      const nextLevel = getHeadingLevel(blocks[i].type)
+      // 遇到同级或更高级别的标题，停止
+      if (nextLevel > 0 && nextLevel <= blockLevel) {
+        break
+      }
+      endIndex = i
+    }
+    
+    return { start: startIndex, end: endIndex }
+  }
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string)
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    setActiveId(null)
+    
+    if (!over || active.id === over.id) return
+    
+    const oldIndex = blocks.findIndex(b => b.id === active.id)
+    const newIndex = blocks.findIndex(b => b.id === over.id)
+    
+    if (oldIndex === -1 || newIndex === -1) return
+    
+    isLocalChange.current = true
+    
+    const draggedBlock = blocks[oldIndex]
+    const draggedLevel = getHeadingLevel(draggedBlock.type)
+    
+    // 如果拖拽的是标题，需要带上下方的内容一起移动
+    if (draggedLevel > 0) {
+      const { start, end } = getHeadingRange(oldIndex)
+      const blocksToMove = blocks.slice(start, end + 1)
+      
+      // 计算目标位置
+      let targetIndex = newIndex
+      if (newIndex > oldIndex) {
+        // 向下移动时，需要考虑移除的块数量
+        const targetLevel = getHeadingLevel(blocks[newIndex].type)
+        if (targetLevel > 0) {
+          // 如果目标是标题，放在该标题区块之后
+          const targetRange = getHeadingRange(newIndex)
+          targetIndex = targetRange.end + 1 - blocksToMove.length
+        }
+      }
+      
+      // 先移除要移动的块
+      const newBlocks = blocks.filter((_, i) => i < start || i > end)
+      // 计算插入位置
+      const insertAt = targetIndex > start ? targetIndex - blocksToMove.length + 1 : targetIndex
+      // 插入到新位置
+      newBlocks.splice(Math.max(0, Math.min(insertAt, newBlocks.length)), 0, ...blocksToMove)
+      
+      setBlocks(newBlocks)
+    } else {
+      // 非标题块直接移动
+      setBlocks(arrayMove(blocks, oldIndex, newIndex))
+    }
+  }
+
+  // 用于 SortableContext 的 id 列表
+  const blockIds = useMemo(() => blocks.map(b => b.id), [blocks])
+
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       {/* 标题栏 */}
@@ -302,6 +685,18 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
               <span className="hidden sm:inline">导入待办</span>
             </button>
           )}
+          <button
+            onClick={() => setIsPrivateMode(!isPrivateMode)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
+              isPrivateMode
+                ? 'text-amber-600 bg-amber-50 hover:bg-amber-100'
+                : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+            }`}
+            title={isPrivateMode ? "当前：隐私模式（隐藏隐私内容）" : "当前：正常模式（显示所有内容）"}
+          >
+            {isPrivateMode ? <EyeOff size={16} /> : <Eye size={16} />}
+            <span className="hidden sm:inline">{isPrivateMode ? '隐私' : '正常'}</span>
+          </button>
           <button
             onClick={handleCopyContent}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
@@ -348,124 +743,37 @@ const Editor: React.FC<EditorProps> = ({ log, previousLog, onUpdate, onDelete })
             </div>
           )}
 
-          {blocks.map((block, index) => (
-            <div key={block.id} className="group flex items-start -ml-8 pl-8 relative">
-              {/* 拖拽手柄 */}
-              <div className={`absolute left-0 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing text-gray-300 ${block.type === 'h1' ? 'top-2.5' : block.type === 'h2' ? 'top-2' : block.type === 'h3' ? 'top-1.5' : 'top-1.5'
-                }`}>
-                <GripVertical size={16} />
-              </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={blockIds} strategy={verticalListSortingStrategy}>
+              {blocks.map((block, index) => {
+                // 跳过被折叠隐藏的 blocks
+                if (hiddenBlockIds.has(block.id)) return null
 
-              {/* 标题图标 - 可点击切换 */}
-              {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
-                <div className="relative" ref={headingMenuOpen === block.id ? menuRef : null}>
-                  <button
-                    onClick={() => setHeadingMenuOpen(headingMenuOpen === block.id ? null : block.id)}
-                    className={`flex items-center gap-0.5 mr-2 flex-shrink-0 rounded px-1 py-0.5 transition-all hover:bg-gray-100 ${block.type === 'h1' ? 'mt-1.5 text-primary-500' :
-                      block.type === 'h2' ? 'mt-1 text-primary-400' :
-                        'mt-0.5 text-primary-300'
-                      }`}
-                    title="点击切换标题级别"
-                  >
-                    {block.type === 'h1' && <Heading1 size={22} />}
-                    {block.type === 'h2' && <Heading2 size={20} />}
-                    {block.type === 'h3' && <Heading3 size={18} />}
-                    <ChevronDown size={12} className="text-gray-400" />
-                  </button>
-
-                  {/* 标题级别选择菜单 */}
-                  {headingMenuOpen === block.id && (
-                    <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 min-w-[120px]">
-                      <button
-                        onClick={() => {
-                          updateBlock(index, { type: 'h1' })
-                          setHeadingMenuOpen(null)
-                        }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h1' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                          }`}
-                      >
-                        <Heading1 size={18} />
-                        <span className="text-sm">一级标题</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          updateBlock(index, { type: 'h2' })
-                          setHeadingMenuOpen(null)
-                        }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h2' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                          }`}
-                      >
-                        <Heading2 size={18} />
-                        <span className="text-sm">二级标题</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          updateBlock(index, { type: 'h3' })
-                          setHeadingMenuOpen(null)
-                        }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors ${block.type === 'h3' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                          }`}
-                      >
-                        <Heading3 size={18} />
-                        <span className="text-sm">三级标题</span>
-                      </button>
-                      <div className="border-t border-gray-100 my-1" />
-                      <button
-                        onClick={() => {
-                          updateBlock(index, { type: 'paragraph' })
-                          setHeadingMenuOpen(null)
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-500 hover:bg-gray-50 transition-colors"
-                      >
-                        <span className="w-[18px] text-center text-xs">T</span>
-                        <span className="text-sm">正文</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 待办复选框 */}
-              {block.type === 'todo' && (
-                <button
-                  onClick={() => updateBlock(index, { checked: !block.checked })}
-                  className={`mt-1.5 mr-3 flex-shrink-0 transition-all ${block.checked ? 'text-primary-500' : 'text-gray-300 hover:text-primary-400'
-                    }`}
-                >
-                  {block.checked ? (
-                    <CheckSquare size={20} className="drop-shadow-sm" />
-                  ) : (
-                    <Square size={20} />
-                  )}
-                </button>
-              )}
-
-              {/* 文本输入 */}
-              <textarea
-                ref={el => { itemRefs.current[block.id] = el }}
-                value={block.content}
-                onChange={(e) => handleChange(e, index)}
-                onKeyDown={(e) => handleKeyDown(e, index)}
-                placeholder={
-                  block.type === 'h1' ? "一级标题..." :
-                    block.type === 'h2' ? "二级标题..." :
-                      block.type === 'h3' ? "三级标题..." :
-                        block.type === 'todo' ? "待办事项" :
-                          "输入 '# ' 一级标题，'## ' 二级标题，'### ' 三级标题，'1. ' 待办..."
-                }
-                rows={1}
-                className={`w-full bg-transparent resize-none focus:outline-none transition-colors leading-relaxed py-1
-                  ${block.type === 'h1' ? 'text-2xl font-bold text-slate-800' : ''}
-                  ${block.type === 'h2' ? 'text-xl font-semibold text-slate-700' : ''}
-                  ${block.type === 'h3' ? 'text-lg font-semibold text-slate-600' : ''}
-                  ${block.type === 'todo' && block.checked ? 'line-through text-gray-400 decoration-gray-300' : ''}
-                  ${block.type === 'todo' && !block.checked ? 'text-slate-700' : ''}
-                  ${block.type === 'paragraph' ? 'text-slate-700' : ''}
-                `}
-                style={{ minHeight: block.type === 'h1' ? '40px' : block.type === 'h2' ? '36px' : block.type === 'h3' ? '32px' : '28px' }}
-              />
-            </div>
-          ))}
+                return (
+                <SortableBlock key={block.id} block={block} index={index}>
+                  <BlockItem
+                    block={block}
+                    index={index}
+                    updateBlock={updateBlock}
+                    toggleCollapse={toggleCollapse}
+                    togglePrivate={togglePrivate}
+                    headingMenuOpen={headingMenuOpen}
+                    setHeadingMenuOpen={setHeadingMenuOpen}
+                    menuRef={menuRef}
+                    itemRefs={itemRefs}
+                    handleChange={handleChange}
+                    handleKeyDown={handleKeyDown}
+                  />
+                </SortableBlock>
+                )
+              })}
+            </SortableContext>
+          </DndContext>
 
           {blocks.length === 0 && (
             <div className="text-gray-300 italic">点击这里开始输入...</div>

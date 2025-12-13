@@ -54,6 +54,8 @@ export interface Block {
   type: BlockType
   content: string
   checked?: boolean
+  collapsed?: boolean  // 标题折叠状态
+  isPrivate?: boolean  // 标题隐私状态
 }
 
 // 状态枚举
